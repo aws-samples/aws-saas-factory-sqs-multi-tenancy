@@ -1,0 +1,573 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM Template for AWS SaaS Factory Amazon SQS multi-tenancy hands-on
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  DashboardPeriod:
+    Type: Number
+    Default: 60        
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 300
+  Api:
+    Cors:
+      AllowOrigin: "'*'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,x-requested-with'"
+      AllowMethods: "'POST,GET,OPTIONS'"
+    EndpointConfiguration: REGIONAL
+    TracingEnabled: false    
+Resources:
+  UserPoolTenant1:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-tenant1-users
+      MfaConfiguration: "OFF"
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Schema:
+        - Name: tenant_id
+          AttributeDataType: String
+          Mutable: false
+        - Name: identity_pool
+          AttributeDataType: String
+          Mutable: false     
+  UserPoolClientTenant1:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: !Sub ${AWS::StackName}-tenant1-client-app
+        UserPoolId: !Ref UserPoolTenant1
+        SupportedIdentityProviders:
+          - COGNITO
+        ExplicitAuthFlows:
+          - ALLOW_ADMIN_USER_PASSWORD_AUTH
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        GenerateSecret: false
+  IdentityPoolTenant1:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub ${AWS::StackName}-tenant1-identities
+      AllowClassicFlow: true
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClientTenant1
+          ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolTenant1}
+          ServerSideTokenCheck: true
+  IdentityPoolTenant1Roles:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPoolTenant1
+      Roles:
+        authenticated: !GetAtt IdentityPoolTenant1AuthRole.Arn
+  UserPoolTenant2:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-tenant2-users
+      MfaConfiguration: "OFF"
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Schema:
+        - Name: tenant_id
+          AttributeDataType: String
+          Mutable: false
+        - Name: identity_pool
+          AttributeDataType: String
+          Mutable: false          
+  UserPoolClientTenant2:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub ${AWS::StackName}-tenant2-client-app
+      UserPoolId: !Ref UserPoolTenant2
+      SupportedIdentityProviders:
+        - COGNITO
+      ExplicitAuthFlows:
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      GenerateSecret: false
+  IdentityPoolTenant2:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub ${AWS::StackName}-tenant2-identities
+      AllowClassicFlow: true
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClientTenant2
+          ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolTenant2}
+          ServerSideTokenCheck: true
+  IdentityPoolTenant2Roles:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPoolTenant2
+      Roles:
+        authenticated: !GetAtt IdentityPoolTenant2AuthRole.Arn
+  IdentityPoolTenant1AuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sqs-tenant1-cognito-auth-role
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: {"Federated": "cognito-identity.amazonaws.com"}
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud:
+                  - !Ref IdentityPoolTenant1
+              ForAnyValue:StringLike: {"cognito-identity.amazonaws.com:amr": authenticated}
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-tenant1-cognito-auth-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessageBatch
+                  - sqs:SendMessageBatch
+                  - sqs:SendMessage
+                Resource: !GetAtt Tenant1OrderQueue.Arn
+  IdentityPoolTenant2AuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sqs-tenant2-cognito-auth-role
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: {"Federated": "cognito-identity.amazonaws.com"}
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud:
+                  - !Ref IdentityPoolTenant2
+              ForAnyValue:StringLike: {"cognito-identity.amazonaws.com:amr": authenticated}
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-tenant2-cognito-auth-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessageBatch
+                  - sqs:SendMessageBatch
+                  - sqs:SendMessage
+                Resource: 
+                  - !GetAtt PoolOrderQueue1.Arn
+                  - !GetAtt PoolOrderQueue2.Arn
+  # UtilsLayer:
+  #   Type: AWS::Lambda::LayerVersion
+  #   Properties:
+  #     LayerName: !Sub utils-${Environment}
+        # Content:
+        #   S3Bucket: !Ref AssetBucket
+        #   S3Key: !Sub Utils-lambda.zip
+  #     CompatibleRuntimes: [python3.7]
+  # MessagePublishFunctionLogs:
+  #   Type: AWS::Logs::LogGroup
+  #   Properties:
+  #     LogGroupName: !Sub /aws/lambda/sqs-${Environment}-message-publish-${AWS::Region}
+  #     RetentionInDays: 30
+  LambdaPublishExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub sqs-${Environment}-message-publish-${AWS::Region}
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole                    
+      Policies:
+        - PolicyName: !Sub sqs-${Environment}-message-publish-${AWS::Region}
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:PutLogEvents
+                Resource: 
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*:log-stream:*              
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*           
+              - Effect: Allow
+                Action:
+                  - ssm:GetParametersByPath
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*
+              - Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                Resource:  !Sub arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:order_queue*                             
+  MessagePublishFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Name: !Sub sqs-${Environment}-message-publish-${AWS::Region}
+    Properties:
+      CodeUri: lambdas/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Events:
+        MessagePublish:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Path: /message
+            Method: post
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          NAMESPACE: sqs-multi-tenancy
+      Role: !GetAtt LambdaPublishExecutionRole.Arn
+  LambdaConsumeExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub sqs-${Environment}-message-consume-${AWS::Region}
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole                    
+      Policies:
+        - PolicyName: !Sub sqs-${Environment}-message-consume-${AWS::Region}
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:PutLogEvents
+                Resource: 
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*:log-stream:*              
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*           
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessage
+                  - sqs:DeleteMessageBatch
+                  - sqs:ReceiveMessage
+                  - sqs:GetQueueAttributes
+                Resource:  !Sub arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:order_queue*        
+  # MessageConsumeFunctionLogs:
+  #   Type: AWS::Logs::LogGroup
+  #   Properties:
+  #     LogGroupName: !Sub /aws/lambda/sqs-${Environment}-message-consume-${AWS::Region}
+  #     RetentionInDays: 30      
+  MessageConsumeFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Name: !Sub sqs-${Environment}-message-consume-${AWS::Region}
+    Properties:
+      CodeUri: lambdas/
+      Handler: consumer.lambda_handler
+      Runtime: python3.7
+      Timeout: 30
+      ReservedConcurrentExecutions: 2 
+      Events:
+        SQSEvent1:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt Tenant1OrderQueue.Arn
+            BatchSize: 10
+        SQSEvent2:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt PoolOrderQueue1.Arn
+            BatchSize: 10   
+        SQSEvent3:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt PoolOrderQueue2.Arn
+            BatchSize: 10                        
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          NAMESPACE: sqs-multi-tenancy
+      Role: !GetAtt LambdaConsumeExecutionRole.Arn    
+      # Layers:
+      #   - !Ref UtilsLayer
+  # LambdaPermission:
+  #   Type: AWS::Lambda::Permission
+  #   DependsOn:
+  #     - SaasBoostAdminApi
+  #     - MetricServiceQuery
+  #   Properties:
+  #     Principal: apigateway.amazonaws.com
+  #     Action: lambda:InvokeFunction
+  #     FunctionName: !GetAtt MetricServiceQuery.Arn
+  #     SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${API}/*/POST/message
+  Tenant1OrderQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: order_queue_tenant1
+  PoolOrderQueue1:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: order_queue_pool1
+  PoolOrderQueue2:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: order_queue_pool2
+  PoolOrderQueueSSM:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /order/queue/pool
+      Type: String
+      Value: !Sub  ${PoolOrderQueue1} ${PoolOrderQueue2}
+  Tenant1OrderQueueSSM:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /order/queue/tenant1
+      Type: String
+      Value: !Sub  ${Tenant1OrderQueue}
+  Tenant12OrderQueueSSM:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /order/queue/tenant2
+      Type: String
+      Value: !Ref PoolOrderQueueSSM
+
+ ##############
+  # Metrics #
+  ##############
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: sqs-app-metrics
+      DashboardBody: !Sub |
+        {
+          "start": "-PT3H",
+          "periodOverride": "inherit",
+          "widgets": [
+              {
+                  "type": "metric",
+                  "x": 8,
+                  "y": 12,
+                  "width": 8,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/Lambda", "Throttles", "FunctionName", "${MessagePublishFunction}", { "color": "#16bf9f", "label": "Send Message Throttles" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "period": ${DashboardPeriod},
+                      "stat": "Sum",
+                      "region": "${AWS::Region}",
+                      "yAxis": {
+                          "left": {
+                              "min": 0
+                          }
+                      },
+                      "title": "Throttles"
+                  }
+              },
+              {
+                  "type": "log",
+                  "x": 0,
+                  "y": 18,
+                  "width": 24,
+                  "height": 6,
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/${MessagePublishFunction}' | fields @timestamp, loglevel, message, messageId\n| filter loglevel == \"ERR\" and operation == \"send_message\"\n| sort @timestamp desc\n| limit 500\n",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "view": "table",
+                      "title": "Send Message Errors"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 8,
+                  "y": 0,
+                  "width": 12,
+                  "height": 6,
+                  "properties": {
+                      "period": ${DashboardPeriod},
+                      "insightRule": {
+                          "maxContributorCount": 10,
+                          "orderBy": "Sum",
+                          "ruleName": "${TenantIdMessageReceivedInsightRule.RuleName}"
+                      },
+                      "stacked": false,
+                      "view": "timeSeries",
+                      "yAxis": {
+                          "left": {
+                              "showUnits": false
+                          },
+                          "right": {
+                              "showUnits": false
+                          }
+                      },
+                      "region": "${AWS::Region}",
+                      "title": "Received Messages",
+                      "legend": {
+                          "position": "bottom"
+                      }
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 8,
+                  "y": 6,
+                  "width": 12,
+                  "height": 6,
+                  "properties": {
+                      "period": ${DashboardPeriod},
+                      "insightRule": {
+                          "maxContributorCount": 10,
+                          "orderBy": "Sum",
+                          "ruleName": "${TenantIdMessageSentInsightRule.RuleName}"
+                      },
+                      "stacked": false,
+                      "view": "timeSeries",
+                      "yAxis": {
+                          "left": {
+                              "showUnits": false
+                          },
+                          "right": {
+                              "showUnits": false
+                          }
+                      },
+                      "region": "${AWS::Region}",
+                      "title": "Sent Messages",
+                      "legend": {
+                          "position": "bottom"
+                      }
+                  }
+              }
+            ]
+        }
+  TenantIdMessageSentInsightRule:
+    Type: AWS::CloudWatch::InsightRule
+    Properties:
+      RuleName: !Sub "${AWS::StackName}-sent-messageCount"
+      RuleState: ENABLED
+      RuleBody: !Sub |
+        {
+          "Schema": {
+            "Name": "CloudWatchLogRule",
+            "Version": 1
+          },
+          "LogGroupNames": [
+            "/aws/lambda/${MessagePublishFunction}"
+          ],
+          "LogFormat": "JSON",
+          "Contribution": {
+            "Keys": [
+              "$.tenantId",
+              "$.queue"
+            ],
+            "ValueOf": "$.messageCount",
+            "Filters": [ ]
+          },
+          "AggregateOn": "Sum"
+        }      
+  TenantIdMessageReceivedInsightRule:
+    Type: AWS::CloudWatch::InsightRule
+    Properties:
+      RuleName: !Sub "${AWS::StackName}-received-messageCount"
+      RuleState: ENABLED
+      RuleBody: !Sub |
+        {
+          "Schema": {
+            "Name": "CloudWatchLogRule",
+            "Version": 1
+          },
+          "LogGroupNames": [
+            "/aws/lambda/${MessageConsumeFunction}"
+          ],
+          "LogFormat": "JSON",
+          "Contribution": {
+            "Keys": [
+              "$.tenantId",
+              "$.queue"
+            ],
+            "ValueOf": "$.messageCount",
+            "Filters": [ ]
+          },
+          "AggregateOn": "Sum"
+        }           
+
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  MessageCreateApi:
+    Description: "API Gateway endpoint URL for Prod stage for Message Create function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/message"
+  MessageCreateFunction:
+    Description: "Message Publish Lambda Function ARN"
+    Value: !GetAtt MessagePublishFunction.Arn
+  # MessageCreateFunctionIamRole:
+  #   Description: "Implicit IAM Role created for Message create function"
+  #   Value: !GetAtt MessageCreateFunctionRole.Arn
+  Tenant1UserPool:
+    Description: User Pool Id Tenant 1
+    Value: !Ref UserPoolTenant1
+  Tenant1UserPoolClient:
+    Description: User Pool Client Id Tenant 1
+    Value: !Ref UserPoolClientTenant1
+  Tenant1IdentityPool:
+    Description: Identity Pool Id Tenant 1
+    Value: !Ref IdentityPoolTenant1
+  Tenant2UserPool:
+    Description: User Pool Id Tenant 2
+    Value: !Ref UserPoolTenant2
+  Tenant2UserPoolClient:
+    Description: User Pool Client Id Tenant 2
+    Value: !Ref UserPoolClientTenant2
+  Tenant2IdentityPool:
+    Description: Identity Pool Id Tenant 2
+    Value: !Ref IdentityPoolTenant2
+  Tenant1SQS:
+    Description: URL of Tenant 1 SQS
+    Value: !Ref Tenant1OrderQueue
+  Pool1SQS:
+    Description: URL of Pool 1 SQS
+    Value: !Ref PoolOrderQueue1
+  Pool2SQS:
+    Description: URL of Pool 2 SQS
+    Value: !Ref PoolOrderQueue2
