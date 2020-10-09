@@ -1,7 +1,7 @@
 ## Introduction
 Using Amazon SQS in a multi-tenant Software as a Service (SaaS) solution means you need to design for noisy neighbors (or tenants saturating a queue) and you want to maintain tenant data isolation. In this sample, produced by the AWS SaaS Factory, we show you one way to implement Amazon SQS for a multi-tenant applicaiton.
 
-This sample solution goes with the blog at at AWS [Using Amazon SQS in a Multi-tenant Solution](aws.amazon.com/blogblah).
+This sample solution goes with the AWS Partner Network (APN) Blog at [Using Amazon SQS in a Multi-tenant Solution](https://aws.amazon.com/blogs/apn/using-amazon-sqs-in-a-multi-tenant-saas-solution/).
 
 ## Prerequisites
 This sample is written in Python and you will need following installed on your test host.
