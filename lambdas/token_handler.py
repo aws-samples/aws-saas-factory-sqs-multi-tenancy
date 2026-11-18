@@ -16,6 +16,7 @@
  
 
 import json
+import os
 import time
 import urllib.request
 
@@ -80,7 +81,37 @@ def process_token(header):
     userPoolId = issuer[lastIndex:]
     logging.debug('UserPoolId: {}'.format(userPoolId))
 
-    keys_url = issuer + '/.well-known/jwks.json'
+    # The issuer named in the token decides nothing until it has been checked against the
+    # pools this deployment actually owns.
+    #
+    # Previously the JWKS URL was built straight from claims['iss'], which is an unverified
+    # value under the caller's control. Cognito's JWKS endpoints are public and
+    # account-agnostic, so a caller could create a user pool in their own AWS account, mint
+    # a token with any custom:tenant_id they liked, and this function would fetch that
+    # pool's public keys and verify the signature successfully. Pinning the region would not
+    # have helped: the attacker's pool can be in the same region. Only an allowlist of this
+    # deployment's own pool ids distinguishes our issuer from anyone else's.
+    allowed_pool_ids = [
+        p.strip() for p in os.environ.get('ALLOWED_USER_POOL_IDS', '').split(',') if p.strip()
+    ]
+    if not allowed_pool_ids:
+        # Fail closed. An unset variable must not silently restore issuer trust.
+        raise ValueError(
+            'ALLOWED_USER_POOL_IDS is not configured; refusing to verify a token against '
+            'an issuer named by the token itself'
+        )
+    if userPoolId not in allowed_pool_ids:
+        raise ValueError(
+            'Token issuer names user pool {} which is not one of this deployment\'s '
+            'pools'.format(userPoolId)
+        )
+
+    # Rebuild the JWKS URL from the validated pool id rather than reusing the token's own
+    # issuer string, so a token cannot influence the URL even in part.
+    region = userPoolId.split('_')[0]
+    keys_url = 'https://cognito-idp.{}.amazonaws.com/{}/.well-known/jwks.json'.format(
+        region, userPoolId
+    )
     if keys_url in keys_map:
         keys = keys_map[keys_url]
         logging.info("Key found for keys_url: " + keys_url)

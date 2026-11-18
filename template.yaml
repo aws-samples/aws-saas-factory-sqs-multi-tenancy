@@ -250,6 +250,11 @@ Resources:
         Variables:
           ENVIRONMENT: !Ref Environment
           NAMESPACE: sqs-multi-tenancy
+          # The user pools this deployment owns. token_handler.py checks the issuer named
+          # in an incoming token against this list before fetching any JWKS, so a token
+          # minted in someone else's Cognito pool cannot be verified as valid here. Add
+          # any further tenant pools to this list when you add them.
+          ALLOWED_USER_POOL_IDS: !Join [",", [!Ref UserPoolTenant1, !Ref UserPoolTenant2]]
       Role: !GetAtt LambdaPublishExecutionRole.Arn
   LambdaConsumeExecutionRole:
     Type: AWS::IAM::Role
